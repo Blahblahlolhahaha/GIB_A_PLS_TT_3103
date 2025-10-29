@@ -13,14 +13,17 @@ def checksum(buf: bytes) -> bool:
     checksum = (~checksum) & 0xffff
     return checksum.to_bytes(2, byteorder="big")
 
-def send(addr: str, port: int, buf: bytes) -> Tuple[bool, float]:
+def send(addr: str, port: int, buf: bytes) -> Tuple[bool,int, float]:
     start = time.perf_counter_ns() * (pow(10, -9))
+    checkbuf = buf + checksum(buf)
+    tries = 0
+    
     while True:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(0.05)
-            buf += checksum(buf)
-            s.sendto(buf, (addr, port))
+            s.sendto(checkbuf, (addr, port))
+            tries += 1
             actual_end = 0.0
             while True:
                 data, address = s.recvfrom(2048)
@@ -31,8 +34,8 @@ def send(addr: str, port: int, buf: bytes) -> Tuple[bool, float]:
                     actual_end = end
                     break
                 if end - start >= 0.2:
-                    return (False, -1)
-            return (True, actual_end - start)
+                    return (False, tries, -1)
+            return (True, tries, actual_end - start)
         except socket.timeout:
             continue
 
