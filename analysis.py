@@ -17,6 +17,7 @@ def get_performance_metrics():
     total_latency = 0
     lost = 0
     total_tries = 0
+    success = 0
     start = time.perf_counter_ns() * (pow(10, -9))
     for buffer in buffers:
         sent, tries, latency = sender.send("127.0.0.1", 5555, buffer)
@@ -25,6 +26,7 @@ def get_performance_metrics():
             total_latency += latency
             total_size += len(buffer)
             lost += tries - 1
+            success += 1
         else:
             lost += tries
     end = time.perf_counter_ns() * (pow(10, -9))
@@ -33,4 +35,5 @@ def get_performance_metrics():
     pdr = 1 - (lost/total_tries)
     print(f"TP: {tp} bytes/s")
     print(f"PDR: {pdr*100}%")
+    print(f"Avg Latency: {total_latency/success}")
 get_performance_metrics()
