@@ -90,7 +90,7 @@ public class UnreliNET {
                       dst_port = returnPort;
                     // add some delay
                     int delay = min_delay + random.nextInt(max_delay - min_delay + 1);
-                    // Thread.sleep(delay);
+                    Thread.sleep(delay);
                     // send the data
                     dst_socket.send(new DatagramPacket(data, packet.getLength(), dst_addr, dst_port));
                 }
