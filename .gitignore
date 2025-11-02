@@ -5,3 +5,5 @@ bin/
 tests/
 lib/
 lib64
+share/
+include/

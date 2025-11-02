@@ -1,14 +1,15 @@
 import csv
 import sender
 import sender_unreliable
+import server_unreliable
 import random
 import time
 import json
 import matplotlib
-import threading
+import multiprocessing
 from unrelinet import start_server, stop_server
 
-HEADERS = ["Throughput", "Packet Delivery Ratio","Latency", "Jitter"]
+HEADERS = ["Channel","Throughput", "Packet Delivery Ratio","Latency", "Jitter"]
 LOW_LOSS_PORT = 5554
 HIGH_LOSS_PORT = 5555
 reli_res = []
@@ -55,36 +56,52 @@ def get_performance_metrics(reliable: bool, port: int):
     jitter = pow(latency_sq_mean - pow(avg_latency, 2), 0.5)
     
     if reliable:
-        reli_res.append([tp, pdr, avg_latency, jitter])
+        reli_res.append([0,tp, pdr, avg_latency, jitter])
     else:
-        unreli_res.append([tp, pdr, avg_latency, jitter])
+        unreli_res.append([1,tp, pdr, avg_latency, jitter])
 
     print(f"TP: {tp:.2f} bytes/s")
     print(f"PDR: {pdr:.2f}%")
     print(f"jitter: {jitter:.2f}ms")
     print(f"Avg Latency: {total_latency*1000/success:.2f}ms")
 
-low_loss = threading.Thread(target=start_server, args=(0.02, 0, LOW_LOSS_PORT, 5556))
-high_loss = threading.Thread(target=start_server, args=(0.1, 0, HIGH_LOSS_PORT, 5556))
-low_loss.start()
-high_loss.start()
+def main():
+    server =  multiprocessing.Process(target=server_unreliable.start_server)
+    low_loss = multiprocessing.Process(target=start_server, args=(0.01, 0, LOW_LOSS_PORT, 5556))
+    high_loss =  multiprocessing.Process(target=start_server, args=(0.15, 0, HIGH_LOSS_PORT, 5556))
+    low_loss.start()
+    high_loss.start()
+    server.start()
 
-for i in range(1):
-    get_performance_metrics(True, LOW_LOSS_PORT)
-    get_performance_metrics(False, LOW_LOSS_PORT)
+    for i in range(50):
+        get_performance_metrics(True, LOW_LOSS_PORT)
+        get_performance_metrics(False, LOW_LOSS_PORT)
 
-for i in range(1):
-    get_performance_metrics(True, HIGH_LOSS_PORT)
-    get_performance_metrics(False, HIGH_LOSS_PORT)
+    for i in range(50):
+        get_performance_metrics(True, HIGH_LOSS_PORT)
+        get_performance_metrics(False, HIGH_LOSS_PORT)
 
-reli_data = [HEADERS] + [x for x in reli_res]
-unreli_data = [HEADERS] + [x for x in unreli_res]
+    reli_data = [HEADERS] + [x for x in reli_res]
+    unreli_data = [HEADERS] + [x for x in unreli_res]
 
-with open("reli.csv","w",newline="") as f:
-    writer = csv.writer(f)
-    writer.writerows([HEADERS] + [x for x in reli_res])
+    with open("reli.csv","w",newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows([HEADERS] + [x for x in reli_res])
 
-with open("unreli.csv","w",newline="") as f:
-    writer = csv.writer(f)
-    writer.writerows([HEADERS] + [x for x in unreli_res])
+    with open("unreli.csv","w",newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows([HEADERS] + [x for x in unreli_res])
 
+    
+    high_loss.terminate()
+    low_loss.terminate()
+    server.terminate()
+
+    
+    high_loss.join()
+    low_loss.join()
+    server.join()
+    
+
+if __name__ == "__main__":
+    main()
