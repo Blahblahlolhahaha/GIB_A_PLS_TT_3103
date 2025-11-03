@@ -4,8 +4,9 @@ import threading
 
 
 class Sender:
-    def __init__(self, num_packets) -> None:
+    def __init__(self, num_packets, reliability_probability) -> None:
         self.num_packets = num_packets
+        self.reliability_probability = reliability_probability
 
         self.dest_addr = "localhost"
         self.dest_port = 8080
@@ -39,16 +40,24 @@ class Sender:
             => Multithread the sending of each packet as seen in `start()`
         """
 
-        is_reliable = random.choice([True, False])
+        is_reliable = True
+
+        rdm_val = random.random()
+        if rdm_val > self.reliability_probability:
+            is_reliable = False
 
         # TODO: Call GameNetAPI with is_reliable, self.dest_addr, self.dest_port
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Expected 1 argument: number of packets to send")
+    if len(sys.argv) != 3:
+        print(
+            "Expected 2 arguments: number of packets to send and reliability probability"
+        )
+        print("[USAGE] python3 sender.py <num_packets> <reliability_probability>")
+    else:
+        num_packets = int(sys.argv[1])
+        reliability_probability = float(sys.argv[2])
 
-    num_packets = int(sys.argv[1])
-
-    sender = Sender(num_packets)
-    sender.start()
+        sender = Sender(num_packets, reliability_probability)
+        sender.start()

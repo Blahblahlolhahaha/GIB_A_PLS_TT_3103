@@ -5,6 +5,7 @@ class Receiver:
 
     def receive(self):
         # TODO: Listen for messages from GameNetAPI
+        # Probably need a socket here
 
         # TODO: Ack messages received
 
