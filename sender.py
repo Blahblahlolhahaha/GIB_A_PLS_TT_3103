@@ -1,7 +1,7 @@
 import sys
 import random
 import threading
-
+from gamenet_api import GameNetAPI, CH_RELIABLE, CH_UNRELIABLE
 
 class Sender:
     def __init__(self, num_packets, reliability_probability) -> None:
