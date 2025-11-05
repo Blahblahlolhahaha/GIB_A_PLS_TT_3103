@@ -50,7 +50,7 @@ class Sender:
                 i, send_thread = buffer
                 send_thread.join()
 
-        self.write_metrics()
+        # self.write_metrics()
 
     def _init_arrays(self):
         for _ in range(self.num_packets):
@@ -102,32 +102,32 @@ class Sender:
         else:
             self.unreliable_time[idx] = datetime.now() - self.unreliable_time[idx]
 
-    def write_metrics(self):
-        # FIX: How to check unsuccessful?
-        is_reliable = []
-        latency = []
-
-        for i in range(self.num_packets):
-            if self.reliable_time[i] is not None:
-                s = self.reliable_time[i].seconds
-                ms = self.reliable_time[i].microseconds
-
-                latency.append(f"{s}.{ms}")
-                is_reliable.append(1)
-
-            else:
-                s = self.unreliable_time[i].seconds
-                ms = self.unreliable_time[i].microseconds
-
-                latency.append(f"{s}.{ms}")
-                is_reliable.append(0)
-
-        # Collect and transpose data
-        data = zip(*[is_reliable, latency])
-
-        with open("metrics.csv", "a", newline=" ") as file:
-            writer = csv.writer(file)
-            writer.writerows(data)
+    # def write_metrics(self):
+    #     # FIX: How to check unsuccessful?
+    #     is_reliable = []
+    #     latency = []
+    #
+    #     for i in range(self.num_packets):
+    #         if self.reliable_time[i] is not None:
+    #             s = self.reliable_time[i].seconds
+    #             ms = self.reliable_time[i].microseconds
+    #
+    #             latency.append(f"{s}.{ms}")
+    #             is_reliable.append(1)
+    #
+    #         else:
+    #             s = self.unreliable_time[i].seconds
+    #             ms = self.unreliable_time[i].microseconds
+    #
+    #             latency.append(f"{s}.{ms}")
+    #             is_reliable.append(0)
+    #
+    #     # Collect and transpose data
+    #     data = zip(*[is_reliable, latency])
+    #
+    #     with open("metrics.csv", "a", newline=" ") as file:
+    #         writer = csv.writer(file)
+    #         writer.writerows(data)
 
 
 if __name__ == "__main__":
