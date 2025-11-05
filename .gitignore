@@ -1,1 +1,10 @@
-**__pycache__/
+<<<<<<< HEAD
+__pycache__/
+*.class
+*.pyc
+bin/
+tests/
+lib/
+lib64
+share/
+>>>>>>> playground
