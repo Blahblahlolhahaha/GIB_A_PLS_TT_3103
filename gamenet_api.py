@@ -231,9 +231,9 @@ class GameNetAPI:
                     print(f"UNRELIABLE CHANNEL: dropped old seq={seq}")
             elif ch == CH_METRIC:
                 self.end_time = now_ms()
-                print(payload)
-                total_reli= int.from_bytes(payload[1:5],"big")
-                total_unreli = int.from_bytes(payload[5:],"big")
+                total_reli= int.from_bytes(payload[0:4],"big")
+                total_unreli = int.from_bytes(payload[4:],"big")
+                print(total_reli)
                 self._send_ack(seq)
                 self.print_metrics(total_reli, total_unreli)
             else:
@@ -329,12 +329,17 @@ class GameNetAPI:
         avg_latency = self.reli_total_latency / self.reli_packets_recv 
         jitter = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
         pdr = self.reli_packets_recv / total_reli
+        print(self.reli_packets_recv)
+        print(total_reli)
         print("Reliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
         print(f"Jitter: {jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
 
+        print(self.unreli_packets_recv)
+
+        print(total_unreli)
         tp = self.unreli_total_bytes / (duration / 1000)
         avg_latency = self.unreli_total_latency / self.unreli_packets_recv 
         jitter = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
@@ -344,3 +349,21 @@ class GameNetAPI:
         print(f"Avg Latency: {avg_latency:.2f}ms")
         print(f"Jitter: {jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
+        self.reset_metrics()
+
+
+    def reset_metrics(self):
+        self.reli_packets_send = 0
+        
+        self.reli_packets_recv = 0
+        self.reli_total_bytes = 0
+        self.reli_total_latency = 0
+        self.reli_latency_sq = 0
+
+        #unreliable stats
+        self.unreli_packets_send = 0
+        
+        self.unreli_packets_recv = 0
+        self.unreli_total_bytes = 0
+        self.unreli_total_latency = 0
+        self.unreli_latency_sq = 0

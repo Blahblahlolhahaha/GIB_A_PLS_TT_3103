@@ -18,7 +18,7 @@ class Sender:
         self.port = 8000
 
         self.dest_addr = "localhost"
-        self.dest_port = 8001
+        self.dest_port = 8002
 
         self.buffers = []
 
