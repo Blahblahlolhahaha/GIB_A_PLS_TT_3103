@@ -49,6 +49,7 @@ class Sender:
             for buffer in self.buffers:
                 i, send_thread = buffer
                 send_thread.join()
+            self.gamenet.close()
 
         # self.write_metrics()
 

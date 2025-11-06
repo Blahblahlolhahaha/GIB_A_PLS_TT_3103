@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 import zlib
+import atexit
 from collections import deque
 from typing import Optional, Tuple, List
 
@@ -19,12 +20,13 @@ Header layout (big-endian), 11 Bytes: | Channel (1B) | Sequence (2B) | Timestamp
 CH_RELIABLE = 0
 CH_UNRELIABLE = 1
 CH_ACK = 2
+CH_METRIC = 3
 
 SEQ_MOD = 65536
 HEADER_SIZE = 1 + 2 + 4 + 4  # 11 bytes
 
 def now_ms() -> int:
-    return int(time.time() * 1000)
+    return int(time.time() * 1000) & 0xffffffff
 
 class GameNetAPI:
     def __init__(
@@ -37,7 +39,23 @@ class GameNetAPI:
         self.sock.bind(local_addr)
         self.sock.settimeout(0.2)
         self.peer_addr = peer_addr
+       
+        #reliable stats
+        self.reli_packets_send = 0
+        
+        self.reli_packets_recv = 0
+        self.reli_total_bytes = 0
+        self.reli_total_latency = 0
+        self.reli_latency_sq = 0
 
+        #unreliable stats
+        self.unreli_packets_send = 0
+        
+        self.unreli_packets_recv = 0
+        self.unreli_total_bytes = 0
+        self.unreli_total_latency = 0
+        self.unreli_latency_sq = 0
+        
         # rx: receive, retx: retransmit
         self.retry_wait_duration_ms = retry_wait_duration_ms
         self.running = False
@@ -62,9 +80,12 @@ class GameNetAPI:
         # messages ready to be delivered to the application: (channel, seq, ts_ms, payload)
         self.app_recv_q = deque()
         self.app_recv_q_lock = threading.Lock()
-
+        self.start_time = None
+        self.end_time = None
+        
 
     def start(self):
+        self.start_time = now_ms()
         self.running = True
         self.rx_thread = threading.Thread(target=self._rx_worker, daemon=True)
         self.rx_thread.start()
@@ -72,6 +93,8 @@ class GameNetAPI:
         self.retx_thread.start()
 
     def close(self):
+        payload = self.reli_packets_send.to_bytes(4,"big") + self.unreli_packets_send.to_bytes(4, "big")
+        self._send_reliable(payload,True)
         self.running = False
         try:
             self.sock.close()
@@ -82,20 +105,22 @@ class GameNetAPI:
     def send(self, payload: bytes, reliable: bool = True) -> int:
         return self._send_reliable(payload) if reliable else self._send_unreliable(payload)
 
-    def _send_reliable(self, payload: bytes) -> int:
+    def _send_reliable(self, payload: bytes, is_metric = False) -> int:
         with self.send_lock:
             seq = self.next_reliable_seq
             self.next_reliable_seq = (self.next_reliable_seq + 1) % SEQ_MOD
 
-            pkt = self._build_packet(CH_RELIABLE, seq, payload)
+            pkt = self._build_packet(CH_RELIABLE if not is_metric else CH_METRIC, seq, payload)
             self.sock.sendto(pkt, self.peer_addr)
             now = now_ms()
+            self.reli_packets_send += 1
 
             # Add to packet to pending ack queue
             self.pkts_pending_ack[seq] = {
                 "payload": payload,
                 "send_timestamp": now,
                 "last_tx": now,
+                "is_metric": is_metric,
                 "retries": 0,
             }
             return seq
@@ -106,6 +131,7 @@ class GameNetAPI:
             self.last_unreliable_seq_tx = seq
             pkt = self._build_packet(CH_UNRELIABLE, seq, payload)
             self.sock.sendto(pkt, self.peer_addr)
+            self.unreli_packets_send += 1
             return seq
 
     def recv(self, timeout_ms: int = 100) -> List[Tuple[int, int, int, bytes]]:
@@ -161,6 +187,7 @@ class GameNetAPI:
             recv_timestamp = now_ms()
             try:
                 ch, seq, send_timestamp, payload = self._parse_packet(data)
+                latency  = recv_timestamp - send_timestamp
             except Exception as e:
                 print(f"Dropped bad packet with error: {e}")
                 continue
@@ -177,7 +204,11 @@ class GameNetAPI:
             if ch == CH_RELIABLE:
                 # ACK it
                 self._send_ack(seq)
-                print("data", "rx", CH_RELIABLE, seq, send_timestamp, recv_timestamp, recv_timestamp - send_timestamp, 0, len(payload))
+                print("data", "rx", CH_RELIABLE, seq, send_timestamp, recv_timestamp, latency, 0, len(payload))
+                self.reli_packets_recv += 1
+                self.reli_total_latency += latency
+                self.reli_latency_sq += pow(latency, 2)
+                self.reli_total_bytes += len(payload)
                 self._handle_reliable_rx(seq, send_timestamp, payload)
             elif ch == CH_UNRELIABLE:
                 # retain only freshest data
@@ -190,10 +221,21 @@ class GameNetAPI:
                         to_deliver_to_app = True
                 if to_deliver_to_app:
                     self.last_unreliable_seq_rx = seq
+                    self.unreli_packets_recv += 1
+                    self.unreli_total_bytes += len(payload)
+                    self.unreli_total_latency += latency 
+                    self.unreli_latency_sq += pow(latency, 2)
                     with self.app_recv_q_lock:
                         self.app_recv_q.append((CH_UNRELIABLE, seq, send_timestamp, payload))
                 else:
                     print(f"UNRELIABLE CHANNEL: dropped old seq={seq}")
+            elif ch == CH_METRIC:
+                self.end_time = now_ms()
+                print(payload)
+                total_reli= int.from_bytes(payload[1:5],"big")
+                total_unreli = int.from_bytes(payload[5:],"big")
+                self._send_ack(seq)
+                self.print_metrics(total_reli, total_unreli)
             else:
                 print(f"Unknown channel: {ch}")
 
@@ -258,7 +300,7 @@ class GameNetAPI:
                         to_retx.append((seq, ent))
 
             for seq, ent in to_retx:
-                pkt = self._build_packet(CH_RELIABLE, seq, ent["payload"])
+                pkt = self._build_packet(CH_RELIABLE if not ent["is_metric"] else CH_METRIC, seq, ent["payload"])
                 try:
                     self.sock.sendto(pkt, self.peer_addr)
                 except OSError:
@@ -280,3 +322,25 @@ class GameNetAPI:
                     print("data_retx", "tx", CH_RELIABLE, seq, send_ts_print, "", "", retries_print, len(ent["payload"]))
             time.sleep(0.01)
 
+    def print_metrics(self, total_reli: int, total_unreli: int):
+        duration = self.end_time - self.start_time
+        
+        tp = self.reli_total_bytes / (duration / 1000)
+        avg_latency = self.reli_total_latency / self.reli_packets_recv 
+        jitter = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
+        pdr = self.reli_packets_recv / total_reli
+        print("Reliable Channel: ")
+        print(f"TP: {tp:.2f} bytes/s")
+        print(f"Avg Latency: {avg_latency:.2f}ms")
+        print(f"Jitter: {jitter:.2f}ms")
+        print(f"PDR: {pdr*100:.2f}%")
+
+        tp = self.unreli_total_bytes / (duration / 1000)
+        avg_latency = self.unreli_total_latency / self.unreli_packets_recv 
+        jitter = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
+        pdr = self.unreli_packets_recv / total_unreli
+        print("Unreliable Channel: ")
+        print(f"TP: {tp:.2f} bytes/s")
+        print(f"Avg Latency: {avg_latency:.2f}ms")
+        print(f"Jitter: {jitter:.2f}ms")
+        print(f"PDR: {pdr*100:.2f}%")

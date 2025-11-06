@@ -14,6 +14,7 @@ class Receiver:
         )
 
     def start(self):
+        self.gamenet.start()
         while self.gamenet.running:
             packets = self.gamenet.recv(timeout_ms=200)
 
