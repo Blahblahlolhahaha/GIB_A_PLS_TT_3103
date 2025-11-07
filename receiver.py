@@ -1,8 +1,9 @@
+import sys
 from gamenet_api import GameNetAPI, CH_RELIABLE, CH_UNRELIABLE
 
 
 class Receiver:
-    def __init__(self) -> None:
+    def __init__(self, metric: bool) -> None:
         self.addr = "localhost"
         self.port = 8001
 
@@ -10,7 +11,7 @@ class Receiver:
         self.dest_port = 8000
 
         self.gamenet = GameNetAPI(
-            (self.addr, self.port), (self.dest_addr, self.dest_port)
+            (self.addr, self.port), (self.dest_addr, self.dest_port), metric = metric
         )
 
     def start(self):
@@ -35,5 +36,5 @@ class Receiver:
 
 
 if __name__ == "__main__":
-    receiver = Receiver()
+    receiver = Receiver("-m" in sys.argv)
     receiver.start()

@@ -33,6 +33,7 @@ class GameNetAPI:
         self,
         local_addr: Tuple[str, int],
         peer_addr: Tuple[str, int],
+        metric: bool = False,
         retry_wait_duration_ms: int = 200
     ):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -82,6 +83,7 @@ class GameNetAPI:
         self.app_recv_q_lock = threading.Lock()
         self.start_time = None
         self.end_time = None
+        self.metric_mode = metric
         
 
     def start(self):
@@ -93,6 +95,10 @@ class GameNetAPI:
         self.retx_thread.start()
 
     def close(self):
+        while True:
+            with self.send_lock:
+                if len(self.pkts_pending_ack.items()) == 0:
+                    break
         payload = self.reli_packets_send.to_bytes(4,"big") + self.unreli_packets_send.to_bytes(4, "big")
         self._send_reliable(payload,True)
         self.running = False
@@ -205,11 +211,7 @@ class GameNetAPI:
                 # ACK it
                 self._send_ack(seq)
                 print("data", "rx", CH_RELIABLE, seq, send_timestamp, recv_timestamp, latency, 0, len(payload))
-                self.reli_packets_recv += 1
-                self.reli_total_latency += latency
-                self.reli_latency_sq += pow(latency, 2)
-                self.reli_total_bytes += len(payload)
-                self._handle_reliable_rx(seq, send_timestamp, payload)
+                self._handle_reliable_rx(seq, send_timestamp, payload, latency)
             elif ch == CH_UNRELIABLE:
                 # retain only freshest data
                 to_deliver_to_app = False
@@ -233,9 +235,9 @@ class GameNetAPI:
                 self.end_time = now_ms()
                 total_reli= int.from_bytes(payload[0:4],"big")
                 total_unreli = int.from_bytes(payload[4:],"big")
-                print(total_reli)
                 self._send_ack(seq)
                 self.print_metrics(total_reli, total_unreli)
+                self.last_unreliable_seq_rx = None
             else:
                 print(f"Unknown channel: {ch}")
 
@@ -243,7 +245,7 @@ class GameNetAPI:
         # True if 'a' is older than 'b' in modulo space (within half-range)
         return 0 < (b - a + SEQ_MOD) % SEQ_MOD < (SEQ_MOD // 2)
 
-    def _handle_reliable_rx(self, seq: int, ts_ms: int, payload: bytes):
+    def _handle_reliable_rx(self, seq: int, ts_ms: int, payload: bytes, latency: int):
         # buffer out of order packets
         # deliver in order at expected_seq
         with self.recv_lock:
@@ -258,6 +260,10 @@ class GameNetAPI:
             # Buffer this out-of-order or head candidate
             self.buffer[seq] = (ts_ms, payload)
 
+            self.reli_packets_recv += 1
+            self.reli_total_latency += latency
+            self.reli_latency_sq += pow(latency, 2)
+            self.reli_total_bytes += len(payload)
             while True:
                 # If the current head-of-line is present, deliver it and advance
                 if self.expected_seq in self.buffer:
@@ -296,7 +302,8 @@ class GameNetAPI:
             to_retx = []
             with self.send_lock:
                 for seq, ent in list(self.pkts_pending_ack.items()):
-                    if now - ent["last_tx"] >= self.retry_wait_duration_ms:
+                    if not self.metric_mode: print(now - ent["last_tx"])
+                    if now - ent["last_tx"] >= (self.retry_wait_duration_ms/4):
                         to_retx.append((seq, ent))
 
             for seq, ent in to_retx:
