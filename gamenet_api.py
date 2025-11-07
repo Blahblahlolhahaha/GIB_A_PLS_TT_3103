@@ -25,7 +25,7 @@ CH_METRIC = 3
 
 SEQ_MOD = 65536
 HEADER_SIZE = 1 + 2 + 4 + 4  # 11 bytes
-CSV_HEADER = [["Throughput", "Latency", "Jitter", "PDR"]]
+CSV_HEADER = [["Channel","Throughput", "Latency", "Jitter", "PDR"]]
 def now_ms() -> int:
     return int(time.time() * 1000) & 0xffffffff
 
@@ -86,8 +86,7 @@ class GameNetAPI:
         self.start_time = None
         self.end_time = None
         self.metric_mode = metric
-        self.reli_list = []
-        self.unreli_list = []
+        self.data = []
         
 
     def start(self):
@@ -105,6 +104,11 @@ class GameNetAPI:
                     break
         payload = self.reli_packets_send.to_bytes(4,"big") + self.unreli_packets_send.to_bytes(4, "big")
         self._send_reliable(payload,True)
+        while True:
+            # wait for metric packet
+            with self.send_lock:
+                if len(self.pkts_pending_ack.items()) == 0:
+                    break
         self.running = False
         try:
             self.sock.close()
@@ -357,7 +361,7 @@ class GameNetAPI:
         print(self.unreli_packets_recv)
 
         if pdr != 0 and pdr <= 100 and self.reli_packets_recv != 0:
-            self.reli_list.append([tp, avg_latency, jitter, pdr])
+            self.data.append([1, tp, avg_latency, jitter, pdr])
 
         tp = self.unreli_total_bytes / (duration / 1000)
         if total_unreli == 0:
@@ -379,20 +383,15 @@ class GameNetAPI:
         print(f"PDR: {pdr*100:.2f}%")
 
         if pdr != 0 and pdr <= 100 and self.unreli_packets_recv != 0:
-            self.unreli_list.append([tp, avg_latency, jitter, pdr])
+            self.data.append([0, tp, avg_latency, jitter, pdr])
 
         self.reset_metrics()
 
     def on_exit(self):
-        with open("reli.csv", "w") as f:
-            reli_csv = CSV_HEADER + self.reli_list
+        with open("data_low.csv", "w") as f:
+            reli_csv = CSV_HEADER + self.data
             writer = csv.writer(f)
             writer.writerows(reli_csv)
-
-        with open("unreli.csv", "w") as f:
-            unreli_csv = CSV_HEADER + self.unreli_list
-            writer = csv.writer(f)
-            writer.writerows(unreli_csv)
 
     def reset_metrics(self):
         self.start_time = now_ms()

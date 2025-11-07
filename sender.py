@@ -112,6 +112,5 @@ if __name__ == "__main__":
     else:
         num_packets = int(sys.argv[1])
         reliability_probability = float(sys.argv[2])
-        for i in range(50):
-            sender = Sender(num_packets, reliability_probability)
-            sender.start()
+        sender = Sender(num_packets, reliability_probability)
+        sender.start()
