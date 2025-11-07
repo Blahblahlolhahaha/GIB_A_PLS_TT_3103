@@ -3,6 +3,7 @@ import threading
 import time
 import zlib
 import atexit
+import csv
 from collections import deque
 from typing import Optional, Tuple, List
 
@@ -24,7 +25,7 @@ CH_METRIC = 3
 
 SEQ_MOD = 65536
 HEADER_SIZE = 1 + 2 + 4 + 4  # 11 bytes
-
+CSV_HEADER = [["Throughput", "Latency", "Jitter", "PDR"]]
 def now_ms() -> int:
     return int(time.time() * 1000) & 0xffffffff
 
@@ -37,6 +38,7 @@ class GameNetAPI:
         retry_wait_duration_ms: int = 200
     ):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(local_addr)
         self.sock.settimeout(0.2)
         self.peer_addr = peer_addr
@@ -84,6 +86,8 @@ class GameNetAPI:
         self.start_time = None
         self.end_time = None
         self.metric_mode = metric
+        self.reli_list = []
+        self.unreli_list = []
         
 
     def start(self):
@@ -238,6 +242,7 @@ class GameNetAPI:
                 self._send_ack(seq)
                 self.print_metrics(total_reli, total_unreli)
                 self.last_unreliable_seq_rx = None
+                self.expected_seq = 0
             else:
                 print(f"Unknown channel: {ch}")
 
@@ -302,7 +307,6 @@ class GameNetAPI:
             to_retx = []
             with self.send_lock:
                 for seq, ent in list(self.pkts_pending_ack.items()):
-                    if not self.metric_mode: print(now - ent["last_tx"])
                     if now - ent["last_tx"] >= (self.retry_wait_duration_ms/4):
                         to_retx.append((seq, ent))
 
@@ -333,43 +337,73 @@ class GameNetAPI:
         duration = self.end_time - self.start_time
         
         tp = self.reli_total_bytes / (duration / 1000)
-        avg_latency = self.reli_total_latency / self.reli_packets_recv 
-        jitter = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
-        pdr = self.reli_packets_recv / total_reli
-        print(self.reli_packets_recv)
-        print(total_reli)
+        if total_reli == 0:
+            pdr = 0
+        else:
+            pdr = self.reli_packets_recv / total_reli
+
+        if self.reli_packets_recv == 0:
+            avg_latency = 0
+            jitter = 0
+        else:
+            avg_latency = self.reli_total_latency / self.reli_packets_recv 
+            jitter = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
+
         print("Reliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
         print(f"Jitter: {jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
-
         print(self.unreli_packets_recv)
 
-        print(total_unreli)
+        if pdr != 0 and pdr <= 100 and self.reli_packets_recv != 0:
+            self.reli_list.append([tp, avg_latency, jitter, pdr])
+
         tp = self.unreli_total_bytes / (duration / 1000)
-        avg_latency = self.unreli_total_latency / self.unreli_packets_recv 
-        jitter = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
-        pdr = self.unreli_packets_recv / total_unreli
+        if total_unreli == 0:
+            pdr = 0
+        else:
+            pdr = self.unreli_packets_recv / total_unreli
+
+        if self.unreli_packets_recv == 0:
+            avg_latency = 0
+            jitter = 0
+        else:
+            avg_latency = self.unreli_total_latency / self.unreli_packets_recv 
+            jitter = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
+        
         print("Unreliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
         print(f"Jitter: {jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
+
+        if pdr != 0 and pdr <= 100 and self.unreli_packets_recv != 0:
+            self.unreli_list.append([tp, avg_latency, jitter, pdr])
+
         self.reset_metrics()
 
+    def on_exit(self):
+        with open("reli.csv", "w") as f:
+            reli_csv = CSV_HEADER + self.reli_list
+            writer = csv.writer(f)
+            writer.writerows(reli_csv)
+
+        with open("unreli.csv", "w") as f:
+            unreli_csv = CSV_HEADER + self.unreli_list
+            writer = csv.writer(f)
+            writer.writerows(unreli_csv)
 
     def reset_metrics(self):
+        self.start_time = now_ms()
         self.reli_packets_send = 0
-        
         self.reli_packets_recv = 0
         self.reli_total_bytes = 0
         self.reli_total_latency = 0
         self.reli_latency_sq = 0
 
-        #unreliable stats
+        # unreliable stats
         self.unreli_packets_send = 0
-        
         self.unreli_packets_recv = 0
         self.unreli_total_bytes = 0
         self.unreli_total_latency = 0

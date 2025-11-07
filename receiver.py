@@ -1,3 +1,4 @@
+import atexit
 import sys
 from gamenet_api import GameNetAPI, CH_RELIABLE, CH_UNRELIABLE
 
@@ -13,6 +14,7 @@ class Receiver:
         self.gamenet = GameNetAPI(
             (self.addr, self.port), (self.dest_addr, self.dest_port), metric = metric
         )
+        atexit.register(self.gamenet.on_exit)
 
     def start(self):
         self.gamenet.start()

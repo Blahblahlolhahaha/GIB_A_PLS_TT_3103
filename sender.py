@@ -33,12 +33,11 @@ class Sender:
         self.gamenet = GameNetAPI(
             (self.addr, self.port), (self.dest_addr, self.dest_port)
         )
-        self.gamenet.start()
 
     def start(self):
         self._init_arrays()
-
         try:
+            self.gamenet.start()
             for i in range(self.num_packets):
                 payload = self._gen_payload()
                 send_thread = threading.Thread(target=self.send, args=(i, payload))
@@ -113,6 +112,6 @@ if __name__ == "__main__":
     else:
         num_packets = int(sys.argv[1])
         reliability_probability = float(sys.argv[2])
-
-        sender = Sender(num_packets, reliability_probability)
-        sender.start()
+        for i in range(50):
+            sender = Sender(num_packets, reliability_probability)
+            sender.start()
