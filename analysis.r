@@ -60,6 +60,6 @@ yeet = data.frame(
 plot_var("latency", "ms", yeet$latency, yeet$env_channel, main="Average Latency", ylab="Latency (ms)")
 plot_var("jitter", "ms", yeet$jitter, yeet$env_channel, main="Average Jitter", ylab="Jitter (ms)")
 plot_var("PDR", "%", yeet$pdr * 100, yeet$env_channel, main="Average PDR", ylab="Packet Delivery Ratio (%)")
-plot_var("Throughput", "bytes/s", yeet$tp * 100, yeet$env_channel, main="Average Throughput", ylab="Throughput (B/s)")
+plot_var("Throughput", "bytes/s", yeet$tp, yeet$env_channel, main="Average Throughput", ylab="Throughput (B/s)")
 
 
