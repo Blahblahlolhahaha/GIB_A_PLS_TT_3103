@@ -35,8 +35,20 @@ class GameNetAPI:
         local_addr: Tuple[str, int],
         peer_addr: Tuple[str, int],
         metric: bool = False,
-        retry_wait_duration_ms: int = 200
+        retransmission_timeout_ms: int = 50,
+        gap_skip_timeout_ms: int = 200
     ):
+        # Validate timeout parameters
+        if retransmission_timeout_ms <= 0:
+            raise ValueError(f"retransmission_timeout_ms must be positive, got {retransmission_timeout_ms}")
+        if gap_skip_timeout_ms <= 0:
+            raise ValueError(f"gap_skip_timeout_ms must be positive, got {gap_skip_timeout_ms}")
+        if retransmission_timeout_ms >= gap_skip_timeout_ms:
+            raise ValueError(
+                f"retransmission_timeout_ms ({retransmission_timeout_ms}) must be less than "
+                f"gap_skip_timeout_ms ({gap_skip_timeout_ms}) to allow retransmissions before skipping gaps"
+            )
+        
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(local_addr)
@@ -60,7 +72,8 @@ class GameNetAPI:
         self.unreli_latency_sq = 0
         
         # rx: receive, retx: retransmit
-        self.retry_wait_duration_ms = retry_wait_duration_ms
+        self.retransmission_timeout_ms = retransmission_timeout_ms
+        self.gap_skip_timeout_ms = gap_skip_timeout_ms
         self.running = False
         self.rx_thread = None
         self.retx_thread = None
@@ -319,7 +332,7 @@ class GameNetAPI:
                 else:
                     # If we've waited long enough, skip the missing head to keep moving, we expect to receive
                     # the missing packet later handled by retransmit worker.
-                    if now - self.gap_since_ms >= self.retry_wait_duration_ms:
+                    if now - self.gap_since_ms >= self.gap_skip_timeout_ms:
                         print(f"RELIABLE skip seq={self.expected_seq}")
                         self.expected_seq = (self.expected_seq + 1) % SEQ_MOD
                         self.gap_since_ms = now # restart gap timer for the new head
@@ -336,7 +349,8 @@ class GameNetAPI:
             to_retx = []
             with self.send_lock:
                 for seq, ent in list(self.pkts_pending_ack.items()):
-                    if now - ent["last_tx"] >= (self.retry_wait_duration_ms/4):
+                    if not self.metric_mode: print(now - ent["last_tx"])
+                    if now - ent["last_tx"] >= self.retransmission_timeout_ms:
                         to_retx.append((seq, ent))
 
             for seq, ent in to_retx:
