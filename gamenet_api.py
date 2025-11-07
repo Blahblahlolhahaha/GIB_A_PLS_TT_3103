@@ -349,7 +349,6 @@ class GameNetAPI:
             to_retx = []
             with self.send_lock:
                 for seq, ent in list(self.pkts_pending_ack.items()):
-                    if not self.metric_mode: print(now - ent["last_tx"])
                     if now - ent["last_tx"] >= self.retransmission_timeout_ms:
                         to_retx.append((seq, ent))
 
@@ -399,7 +398,6 @@ class GameNetAPI:
         print(f"Avg Latency: {avg_latency:.2f}ms")
         print(f"Jitter: {jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
-        print(self.unreli_packets_recv)
 
         if pdr != 0 and pdr <= 100 and self.reli_packets_recv != 0:
             self.data.append([1, tp, avg_latency, jitter, pdr])
