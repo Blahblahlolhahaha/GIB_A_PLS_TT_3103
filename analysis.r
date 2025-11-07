@@ -1,0 +1,65 @@
+options(scipen = 999)
+plot_var <- function(name, unit,vector, names, main, ylab){
+  res = paste("High loss",name , "(reliable): ", as.character(round(vector[1], digits=2)) , unit, "\n")
+  res = paste(res, "High loss" ,name , "(unreliable): ", as.character(round(vector[2], digits=2)), unit, "\n")
+  res = paste(res, "Low loss" ,name , "(reliable): ", as.character(round(vector[3], digits=2)), unit, "\n")
+  res = paste(res, "Low loss" ,name , "(unreliable): ", as.character(round(vector[4], digits=2)), unit, "\n")
+  
+  barplot(
+    height = vector, 
+    names.arg = names,
+    xlab="Loss Environment (Channel)",
+    ylab=ylab,
+    main=main,
+    col=c("#BB6688","#8888CC","#CCAA88","#DDAACC")
+  )
+  
+  cat(res)
+}
+
+setwd("/home/sad/Documents/GitHub/GIB_A_PLS_TT_3103")
+
+data_high = read.csv("data.csv")
+data_low = read.csv("data_low.csv")
+
+data_high_reli = data_high[data_high$Channel == 1,]
+data_high_unreli = data_high[data_high$Channel == 0,]
+
+data_low_reli = data_low[data_low$Channel == 1,]
+data_low_unreli = data_low[data_low$Channel == 0,]
+
+#high loss
+yeet = data.frame(
+  env_channel=c("High loss (Reliable)","High loss (Unreliable)","Low loss (Reliable)", "Low loss (Uneliable)"),
+  latency = c(
+    mean(data_high_reli$Latency),
+    mean(data_high_unreli$Latency),
+    mean(data_low_reli$Latency),
+    mean(data_low_unreli$Latency)
+  ),
+  jitter = c(
+    mean(data_high_reli$Jitter),
+    mean(data_high_unreli$Jitter),
+    mean(data_low_reli$Jitter),
+    mean(data_low_unreli$Jitter)
+  ),
+  pdr = c(
+    mean(data_high_reli$PDR),
+    mean(data_high_unreli$PDR),
+    mean(data_low_reli$PDR),
+    mean(data_low_unreli$PDR)
+  ),
+  tp = c(
+    mean(data_high_reli$Throughput),
+    mean(data_high_unreli$Throughput),
+    mean(data_low_reli$Throughput),
+    mean(data_low_unreli$Throughput)
+  )
+)
+
+plot_var("latency", "ms", yeet$latency, yeet$env_channel, main="Average Latency", ylab="Latency (ms)")
+plot_var("jitter", "ms", yeet$jitter, yeet$env_channel, main="Average Jitter", ylab="Jitter (ms)")
+plot_var("PDR", "%", yeet$pdr * 100, yeet$env_channel, main="Average PDR", ylab="Packet Delivery Ratio (%)")
+plot_var("Throughput", "bytes/s", yeet$tp * 100, yeet$env_channel, main="Average Throughput", ylab="Throughput (B/s)")
+
+

@@ -229,7 +229,7 @@ class GameNetAPI:
                 ch, seq, send_timestamp, payload = self._parse_packet(data)
                 latency  = recv_timestamp - send_timestamp
             except Exception as e:
-                print(f"Dropped bad packet with error: {e}")
+                #print(f"Dropped bad packet with error: {e}")
                 continue
 
             if ch == CH_ACK:
@@ -241,7 +241,7 @@ class GameNetAPI:
                         retries = packet_awaiting_ack["retries"]
                         self.retransmission_map[seq] = (recv_timestamp, rtt, retries) 
 
-                        print("ack", "rx", CH_RELIABLE, seq, packet_awaiting_ack["send_timestamp"], recv_timestamp, rtt, retries, 0)
+                        #print("ack", "rx", CH_RELIABLE, seq, packet_awaiting_ack["send_timestamp"], recv_timestamp, rtt, retries, 0)
                 continue
 
             if ch == CH_RELIABLE:
@@ -253,7 +253,7 @@ class GameNetAPI:
                 else:
                     self.retransmission_map[seq] = (recv_timestamp, latency, 0)
 
-                print("data", "rx", CH_RELIABLE, seq, send_timestamp, recv_timestamp, latency, 0, len(payload))
+                #print("data", "rx", CH_RELIABLE, seq, send_timestamp, recv_timestamp, latency, 0, len(payload))
                 self._handle_reliable_rx(seq, send_timestamp, payload, latency)
             elif ch == CH_UNRELIABLE:
                 # retain only freshest data
@@ -275,8 +275,8 @@ class GameNetAPI:
 
                     with self.app_recv_q_lock:
                         self.app_recv_q.append((CH_UNRELIABLE, seq, send_timestamp, payload))
-                else:
-                    print(f"UNRELIABLE CHANNEL: dropped old seq={seq}")
+                #else:
+                    #print(f"UNRELIABLE CHANNEL: dropped old seq={seq}")
             elif ch == CH_METRIC:
                 self.end_time = now_ms()
                 total_reli= int.from_bytes(payload[0:4],"big")
@@ -333,7 +333,7 @@ class GameNetAPI:
                     # If we've waited long enough, skip the missing head to keep moving, we expect to receive
                     # the missing packet later handled by retransmit worker.
                     if now - self.gap_since_ms >= self.gap_skip_timeout_ms:
-                        print(f"RELIABLE skip seq={self.expected_seq}")
+                        #print(f"RELIABLE skip seq={self.expected_seq}")
                         self.expected_seq = (self.expected_seq + 1) % SEQ_MOD
                         self.gap_since_ms = now # restart gap timer for the new head
                         continue
@@ -373,8 +373,8 @@ class GameNetAPI:
                         retries_print = None
                         send_ts_print = None
 
-                if retries_print is not None:
-                    print("data_retx", "tx", CH_RELIABLE, seq, send_ts_print, "", "", retries_print, len(ent["payload"]))
+                #if retries_print is not None:
+                    #print("data_retx", "tx", CH_RELIABLE, seq, send_ts_print, "", "", retries_print, len(ent["payload"]))
             time.sleep(0.01)
 
     def print_metrics(self, total_reli: int, total_unreli: int):
@@ -427,7 +427,7 @@ class GameNetAPI:
         self.reset_metrics()
 
     def on_exit(self):
-        with open("data_low.csv", "w") as f:
+        with open("data.csv", "w") as f:
             reli_csv = CSV_HEADER + self.data
             writer = csv.writer(f)
             writer.writerows(reli_csv)
