@@ -18,27 +18,47 @@ class Receiver:
 
     def start(self):
         self.gamenet.start()
+        packet_count = 0
+        
+        print("=" * 80)
+        print("RECEIVER LOG - Packet Reception Details")
+        print("=" * 80)
+        print(f"{'Pkt#':<6} {'SeqNo':<7} {'Channel':<12} {'Retries':<8} "
+              f"{'SendTime(ms)':<15} {'RecvTime(ms)':<15} {'RTT(ms)':<10} {'Size':<6}")
+        print("-" * 80)
+        
         while self.gamenet.running:
             packets = self.gamenet.recv(timeout_ms=200)
 
             for data in packets:
                 ch, seq, send_timestamp, payload, recv_timestamp, half_rtt, retries = data
+                packet_count += 1
 
                 if ch == CH_RELIABLE:
-                    reliable_str = "reliable"
+                    channel_str = "RELIABLE"
                 else:
-                    reliable_str = "unreliable"
+                    channel_str = "UNRELIABLE"
 
                 rtt = 2 * half_rtt
 
-                # Logging as requested in the specs
-                print(
-                        f"Received packet with following details: \n    seqNo: {seq} \n" + 
-                        f"    Channel Type: {reliable_str} \n    Retries: {retries} \n"
-                        f"    Sent at {send_timestamp} \n    Received at: {recv_timestamp} \n"
-                        f"    Payload: {payload} \n    Estimated RTT: {rtt}"
-                )
-                print()
+                # Compact tabular logging format
+                print(f"{packet_count:<6} {seq:<7} {channel_str:<12} {retries:<8} "
+                      f"{send_timestamp:<15} {recv_timestamp:<15} {rtt:<10.2f} {len(payload):<6}")
+                
+                # Detailed verbose logging (can be commented out for cleaner output)
+                if False:  # Set to True for verbose logging
+                    print(
+                        f"\n  Packet Details:\n"
+                        f"    Packet Number:  {packet_count}\n"
+                        f"    Sequence No:    {seq}\n"
+                        f"    Channel Type:   {channel_str}\n"
+                        f"    Retransmits:    {retries}\n"
+                        f"    Send Timestamp: {send_timestamp} ms\n"
+                        f"    Recv Timestamp: {recv_timestamp} ms\n"
+                        f"    Estimated RTT:  {rtt:.2f} ms\n"
+                        f"    Payload Size:   {len(payload)} bytes\n"
+                        f"    Payload:        {payload[:50]}{'...' if len(payload) > 50 else ''}\n"
+                    )
 
 
 if __name__ == "__main__":

@@ -15,7 +15,19 @@ Hybrid UDP transport (H-UDP) with:
   - No callbacks; apps poll with recv(timeout_ms).
   - Uses selective repeat instead of go back n
 
-Header layout (big-endian), 11 Bytes: | Channel (1B) | Sequence (2B) | Timestamp ms (4B) | CRC32 (4B) |
+Header layout (big-endian), 11 Bytes: 
+  | Channel (1B) | Sequence (2B) | Timestamp ms (4B) | CRC32 (4B) |
+
+Timeout Parameters:
+  - retransmission_timeout_ms: Time to wait before retransmitting unacked packets (default: 50ms)
+  - gap_skip_timeout_ms (t): Maximum time to wait for a missing packet before skipping it 
+    to prevent head-of-line blocking (default: 200ms as per spec)
+  - Validation: retransmission_timeout_ms < gap_skip_timeout_ms to allow retransmissions 
+    before giving up on a packet
+
+Jitter Calculation:
+  - Implements RFC 3550 jitter: J = J + (|D(i,i-1)| - J)/16
+  - Also tracks standard deviation for comparison purposes
 """
 
 CH_RELIABLE = 0
@@ -25,7 +37,8 @@ CH_METRIC = 3
 
 SEQ_MOD = 65536
 HEADER_SIZE = 1 + 2 + 4 + 4  # 11 bytes
-CSV_HEADER = [["Channel","Throughput", "Latency", "Jitter", "PDR"]]
+CSV_HEADER = [["Channel","Throughput", "Latency", "Jitter (RFC3550)", "PDR"]]
+
 def now_ms() -> int:
     return int(time.time() * 1000) & 0xffffffff
 
@@ -61,7 +74,12 @@ class GameNetAPI:
         self.reli_packets_recv = 0
         self.reli_total_bytes = 0
         self.reli_total_latency = 0
-        self.reli_latency_sq = 0
+        self.reli_latency_sq = 0  # For standard deviation (kept for comparison)
+        
+        # RFC 3550 jitter tracking for reliable channel
+        self.reli_jitter_rfc3550 = 0.0
+        self.reli_last_transit = None
+        self.reli_last_arrival = None
 
         #unreliable stats
         self.unreli_packets_send = 0
@@ -69,7 +87,12 @@ class GameNetAPI:
         self.unreli_packets_recv = 0
         self.unreli_total_bytes = 0
         self.unreli_total_latency = 0
-        self.unreli_latency_sq = 0
+        self.unreli_latency_sq = 0  # For standard deviation (kept for comparison)
+        
+        # RFC 3550 jitter tracking for unreliable channel
+        self.unreli_jitter_rfc3550 = 0.0
+        self.unreli_last_transit = None
+        self.unreli_last_arrival = None
         
         # rx: receive, retx: retransmit
         self.retransmission_timeout_ms = retransmission_timeout_ms
@@ -270,6 +293,14 @@ class GameNetAPI:
                     self.unreli_total_bytes += len(payload)
                     self.unreli_total_latency += latency 
                     self.unreli_latency_sq += pow(latency, 2)
+                    
+                    # RFC 3550 jitter calculation for unreliable channel
+                    transit = recv_timestamp - send_timestamp
+                    if self.unreli_last_transit is not None and self.unreli_last_arrival is not None:
+                        d = abs(transit - self.unreli_last_transit)
+                        self.unreli_jitter_rfc3550 += (d - self.unreli_jitter_rfc3550) / 16.0
+                    self.unreli_last_transit = transit
+                    self.unreli_last_arrival = recv_timestamp
 
                     self.retransmission_map[seq] = (recv_timestamp, latency, 0)
 
@@ -311,6 +342,17 @@ class GameNetAPI:
             self.reli_total_latency += latency
             self.reli_latency_sq += pow(latency, 2)
             self.reli_total_bytes += len(payload)
+            
+            # RFC 3550 jitter calculation for reliable channel
+            # Calculate transit time (one-way delay approximation)
+            transit = ts_ms  # Using send timestamp as transit reference
+            if self.reli_last_transit is not None:
+                # D(i,i-1) = |transit(i) - transit(i-1)|
+                d = abs(latency - self.reli_last_transit)
+                # J = J + (|D| - J)/16 as per RFC 3550
+                self.reli_jitter_rfc3550 += (d - self.reli_jitter_rfc3550) / 16.0
+            self.reli_last_transit = latency  # Store latency for next calculation
+            
             while True:
                 # If the current head-of-line is present, deliver it and advance
                 if self.expected_seq in self.buffer:
@@ -389,20 +431,22 @@ class GameNetAPI:
 
         if self.reli_packets_recv == 0:
             avg_latency = 0
-            jitter = 0
+            jitter_stdev = 0
         else:
             avg_latency = self.reli_total_latency / self.reli_packets_recv 
-            jitter = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
+            jitter_stdev = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
 
         print("Reliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
-        print(f"Jitter: {jitter:.2f}ms")
+        print(f"Jitter (StdDev): {jitter_stdev:.2f}ms")
+        print(f"Jitter (RFC3550): {self.reli_jitter_rfc3550:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
         print(self.unreli_packets_recv)
 
         if pdr != 0 and pdr <= 100 and self.reli_packets_recv != 0:
-            self.data.append([1, tp, avg_latency, jitter, pdr])
+            # Store RFC 3550 jitter instead of standard deviation
+            self.data.append([1, tp, avg_latency, self.reli_jitter_rfc3550, pdr])
 
         tp = self.unreli_total_bytes / (duration / 1000)
         if total_unreli == 0:
@@ -412,19 +456,21 @@ class GameNetAPI:
 
         if self.unreli_packets_recv == 0:
             avg_latency = 0
-            jitter = 0
+            jitter_stdev = 0
         else:
             avg_latency = self.unreli_total_latency / self.unreli_packets_recv 
-            jitter = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
+            jitter_stdev = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
         
         print("Unreliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
-        print(f"Jitter: {jitter:.2f}ms")
+        print(f"Jitter (StdDev): {jitter_stdev:.2f}ms")
+        print(f"Jitter (RFC3550): {self.unreli_jitter_rfc3550:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
 
         if pdr != 0 and pdr <= 100 and self.unreli_packets_recv != 0:
-            self.data.append([0, tp, avg_latency, jitter, pdr])
+            # Store RFC 3550 jitter instead of standard deviation
+            self.data.append([0, tp, avg_latency, self.unreli_jitter_rfc3550, pdr])
 
         self.reset_metrics()
 
@@ -441,6 +487,9 @@ class GameNetAPI:
         self.reli_total_bytes = 0
         self.reli_total_latency = 0
         self.reli_latency_sq = 0
+        self.reli_jitter_rfc3550 = 0.0
+        self.reli_last_transit = None
+        self.reli_last_arrival = None
 
         # unreliable stats
         self.unreli_packets_send = 0
@@ -448,3 +497,6 @@ class GameNetAPI:
         self.unreli_total_bytes = 0
         self.unreli_total_latency = 0
         self.unreli_latency_sq = 0
+        self.unreli_jitter_rfc3550 = 0.0
+        self.unreli_last_transit = None
+        self.unreli_last_arrival = None

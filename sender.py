@@ -3,10 +3,17 @@ import sys
 import string
 import random
 import threading
+import time
 
 from datetime import datetime
 
 from gamenet_api import GameNetAPI, CH_RELIABLE, CH_UNRELIABLE
+
+# Test Reproducibility Parameters
+PACKET_SIZE_MIN = 50  # bytes
+PACKET_SIZE_MAX = 100  # bytes
+SEND_RATE_DELAY_MS = 20  # milliseconds between packets (50 packets/sec)
+# Total duration = num_packets * SEND_RATE_DELAY_MS / 1000 seconds
 
 
 class Sender:
@@ -36,6 +43,13 @@ class Sender:
 
     def start(self):
         self._init_arrays()
+        print(f"Starting sender with {self.num_packets} packets")
+        print(f"Packet size: {PACKET_SIZE_MIN}-{PACKET_SIZE_MAX} bytes")
+        print(f"Send rate: {1000/SEND_RATE_DELAY_MS:.1f} packets/sec ({SEND_RATE_DELAY_MS}ms delay)")
+        estimated_duration = self.num_packets * SEND_RATE_DELAY_MS / 1000
+        print(f"Estimated test duration: {estimated_duration:.1f} seconds")
+        print()
+        
         try:
             self.gamenet.start()
             for i in range(self.num_packets):
@@ -44,6 +58,9 @@ class Sender:
 
                 self.buffers.append((i, send_thread))
                 send_thread.start()
+                
+                # Rate limiting: wait between packet sends
+                time.sleep(SEND_RATE_DELAY_MS / 1000.0)
         finally:
             # Gracefully Shut down
             for buffer in self.buffers:
@@ -63,7 +80,7 @@ class Sender:
 
     def _gen_payload(self, size: int = -1):
         if size == -1:
-            size = random.randint(50, 100)
+            size = random.randint(PACKET_SIZE_MIN, PACKET_SIZE_MAX)
 
         valid_characters = string.ascii_letters + string.digits
         payload = "".join(random.choice(valid_characters) for _ in range(size))
