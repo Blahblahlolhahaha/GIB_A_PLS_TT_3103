@@ -77,6 +77,8 @@ class GameNetAPI:
         self.buffer = {}  # seq -> (ts_ms, payload)
         self.gap_since_ms: Optional[int] = None
 
+        self.retransmission_map = {}
+
         # unreliable recv
         self.last_unreliable_seq_rx = None
 
@@ -148,22 +150,33 @@ class GameNetAPI:
             self.unreli_packets_send += 1
             return seq
 
-    def recv(self, timeout_ms: int = 100) -> List[Tuple[int, int, int, bytes]]:
-        # Polls for delivered msgs and returns a list of (channel, seq, timestamp_ms, payload)
+    def recv(self, timeout_ms: int = 100) -> List[Tuple[int, int, int, bytes, int, int, int]]:
+        # Polls for delivered msgs and returns a list of (channel, seq, timestamp_ms, payload, received timestamp, latency, number of retranmissions)
         end_time = now_ms() + max(0, timeout_ms)
 
         received_packets = []
         while now_ms() < end_time:
             with self.app_recv_q_lock:
                 if self.app_recv_q:
-                    received_packets.append(self.app_recv_q.popleft())
+                    packet_details = self.app_recv_q.popleft()
+                    seq = packet_details[1]
+                    packet_details = packet_details + self.retransmission_map[seq]
+                    received_packets.append(packet_details)
+
+                    # received_packets.append(self.app_recv_q.popleft())
                     break # return as soon as one packet arrives
             time.sleep(0.005)
 
         # Drain a small batch of requests (batched to reduce syscalls)
         with self.app_recv_q_lock:
             while self.app_recv_q and len(received_packets) < 64:
-                received_packets.append(self.app_recv_q.popleft())
+                packet_details = self.app_recv_q.popleft()
+                seq = packet_details[1]
+                packet_details = packet_details + self.retransmission_map[seq]
+                received_packets.append(packet_details)
+
+                # received_packets.append(self.app_recv_q.popleft())
+
         return received_packets
 
     def _build_packet(self, chan: int, seq: int, payload: bytes) -> bytes:
@@ -212,12 +225,21 @@ class GameNetAPI:
                     packet_awaiting_ack = self.pkts_pending_ack.pop(seq, None)
                     if packet_awaiting_ack:
                         rtt = recv_timestamp - packet_awaiting_ack["send_timestamp"]
-                        print("ack", "rx", CH_RELIABLE, seq, packet_awaiting_ack["send_timestamp"], recv_timestamp, rtt, packet_awaiting_ack["retries"], 0)
+                        retries = packet_awaiting_ack["retries"]
+                        self.retransmission_map[seq] = (recv_timestamp, rtt, retries) 
+
+                        print("ack", "rx", CH_RELIABLE, seq, packet_awaiting_ack["send_timestamp"], recv_timestamp, rtt, retries, 0)
                 continue
 
             if ch == CH_RELIABLE:
                 # ACK it
                 self._send_ack(seq)
+                
+                if seq in self.retransmission_map:
+                    self.retransmission_map[seq] = (recv_timestamp, latency, self.retransmission_map[seq][2] + 1)
+                else:
+                    self.retransmission_map[seq] = (recv_timestamp, latency, 0)
+
                 print("data", "rx", CH_RELIABLE, seq, send_timestamp, recv_timestamp, latency, 0, len(payload))
                 self._handle_reliable_rx(seq, send_timestamp, payload, latency)
             elif ch == CH_UNRELIABLE:
@@ -235,6 +257,9 @@ class GameNetAPI:
                     self.unreli_total_bytes += len(payload)
                     self.unreli_total_latency += latency 
                     self.unreli_latency_sq += pow(latency, 2)
+
+                    self.retransmission_map[seq] = (recv_timestamp, latency, 0)
+
                     with self.app_recv_q_lock:
                         self.app_recv_q.append((CH_UNRELIABLE, seq, send_timestamp, payload))
                 else:
@@ -321,6 +346,7 @@ class GameNetAPI:
                 except OSError:
                     return
                 now2 = now_ms()
+
                 # Update bookkeeping under lock in case ACK popped it simultaneously
                 with self.send_lock:
                     cur = self.pkts_pending_ack.get(seq)
@@ -333,6 +359,7 @@ class GameNetAPI:
                         # entry was ACKed and removed, skip printing
                         retries_print = None
                         send_ts_print = None
+
                 if retries_print is not None:
                     print("data_retx", "tx", CH_RELIABLE, seq, send_ts_print, "", "", retries_print, len(ent["payload"]))
             time.sleep(0.01)
