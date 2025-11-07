@@ -62,7 +62,9 @@ class GameNetAPI:
         self.reli_total_bytes = 0
         self.reli_total_latency = 0
         self.reli_latency_sq = 0
-
+        self.reli_jitter = 0
+        self.reli_last_transit = None
+        self.reli_last_arrival = None
         #unreliable stats
         self.unreli_packets_send = 0
         
@@ -70,6 +72,9 @@ class GameNetAPI:
         self.unreli_total_bytes = 0
         self.unreli_total_latency = 0
         self.unreli_latency_sq = 0
+        self.unreli_jitter = 0
+        self.unreli_last_transit = None
+        self.unreli_last_arrival = None
         
         # rx: receive, retx: retransmit
         self.retransmission_timeout_ms = retransmission_timeout_ms
@@ -270,7 +275,11 @@ class GameNetAPI:
                     self.unreli_total_bytes += len(payload)
                     self.unreli_total_latency += latency 
                     self.unreli_latency_sq += pow(latency, 2)
-
+                    
+                    if self.unreli_last_transit is not None:
+                        d = abs(latency - self.unreli_last_transit)
+                        self.unreli_jitter += (d - self.unreli_jitter)/16
+                    self.unreli_last_transit = latency
                     self.retransmission_map[seq] = (recv_timestamp, latency, 0)
 
                     with self.app_recv_q_lock:
@@ -311,6 +320,11 @@ class GameNetAPI:
             self.reli_total_latency += latency
             self.reli_latency_sq += pow(latency, 2)
             self.reli_total_bytes += len(payload)
+            if self.reli_last_transit is not None:
+                d = abs(latency - self.reli_last_transit)
+                self.reli_jitter += (d - self.reli_jitter)/16
+            self.reli_last_transit = latency
+            
             while True:
                 # If the current head-of-line is present, deliver it and advance
                 if self.expected_seq in self.buffer:
@@ -388,19 +402,17 @@ class GameNetAPI:
 
         if self.reli_packets_recv == 0:
             avg_latency = 0
-            jitter = 0
         else:
             avg_latency = self.reli_total_latency / self.reli_packets_recv 
-            jitter = ((self.reli_latency_sq / self.reli_packets_recv) - avg_latency ** 2) ** 0.5
 
         print("Reliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
-        print(f"Jitter: {jitter:.2f}ms")
+        print(f"Jitter: {self.reli_jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
 
         if pdr != 0 and pdr <= 100 and self.reli_packets_recv != 0:
-            self.data.append([1, tp, avg_latency, jitter, pdr])
+            self.data.append([1, tp, avg_latency, self.reli_jitter, pdr])
 
         tp = self.unreli_total_bytes / (duration / 1000)
         if total_unreli == 0:
@@ -410,24 +422,22 @@ class GameNetAPI:
 
         if self.unreli_packets_recv == 0:
             avg_latency = 0
-            jitter = 0
         else:
             avg_latency = self.unreli_total_latency / self.unreli_packets_recv 
-            jitter = ((self.unreli_latency_sq / self.unreli_packets_recv) - avg_latency ** 2) ** 0.5
         
         print("Unreliable Channel: ")
         print(f"TP: {tp:.2f} bytes/s")
         print(f"Avg Latency: {avg_latency:.2f}ms")
-        print(f"Jitter: {jitter:.2f}ms")
+        print(f"Jitter: {self.unreli_jitter:.2f}ms")
         print(f"PDR: {pdr*100:.2f}%")
 
         if pdr != 0 and pdr <= 100 and self.unreli_packets_recv != 0:
-            self.data.append([0, tp, avg_latency, jitter, pdr])
+            self.data.append([0, tp, avg_latency, self.unreli_jitter, pdr])
 
         self.reset_metrics()
 
     def on_exit(self):
-        with open("data.csv", "w") as f:
+        with open("data_low.csv", "w") as f:
             reli_csv = CSV_HEADER + self.data
             writer = csv.writer(f)
             writer.writerows(reli_csv)
